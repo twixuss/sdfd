@@ -1,0 +1,6 @@
+[submodule "dep/nob"]
+	path = dep/nob
+	url = https://github.com/tsoding/nob.h
+[submodule "dep/stb"]
+	path = dep/stb
+	url = https://github.com/nothings/stb
