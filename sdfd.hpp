@@ -13,12 +13,34 @@
 
 namespace sdfd {
 
+
+inline float sign(float x) { return (x<0)?-1:1; }
+inline float sign0(float x) { return x==0?0:(x<0)?-1:1; }
+
+
 struct Vector2 {
 	float x, y;
+
+	Vector2 yx() const { return {y,x}; }
+
+	Vector2 operator+(Vector2 b) const { return {x+b.x, y+b.y}; }
 	Vector2 operator-(Vector2 b) const { return {x-b.x, y-b.y}; }
+	Vector2 operator*(Vector2 b) const { return {x*b.x, y*b.y}; }
+	Vector2 operator/(Vector2 b) const { return {x/b.x, y/b.y}; }
+	Vector2 operator+(float b) const { return {x+b, y+b}; }
+	Vector2 operator-(float b) const { return {x-b, y-b}; }
+	Vector2 operator*(float b) const { return {x*b, y*b}; }
+	Vector2 operator/(float b) const { return {x/b, y/b}; }
+	Vector2 &operator+=(Vector2 b) { return x+=b.x, y+=b.y, *this; }
+	Vector2 &operator-=(Vector2 b) { return x-=b.x, y-=b.y, *this; }
+	Vector2 &operator*=(Vector2 b) { return x*=b.x, y*=b.y, *this; }
+	Vector2 &operator/=(Vector2 b) { return x/=b.x, y/=b.y, *this; }
 };
-float dot(Vector2 a, Vector2 b) { return a.x*b.x + a.y*b.y; }
-float length(Vector2 a) { return sqrtf(a.x*a.x + a.y*a.y); }
+inline Vector2 abs(Vector2 a) { return {fabsf(a.x),fabsf(a.y)}; }
+inline float dot(Vector2 a, Vector2 b) { return a.x*b.x + a.y*b.y; }
+inline float length(Vector2 a) { return sqrtf(a.x*a.x + a.y*a.y); }
+// rotate 90deg ccw
+inline Vector2 perp(Vector2 a) { return {-a.y, a.x}; }
 
 
 struct Plane {
@@ -48,10 +70,21 @@ SDFD_DEF Plane plane_from_point_and_angle(Vector2 point, float angle);
 // Normal is {cos(angle), sin(angle)}. Plane is moved by offset along the normal.
 SDFD_DEF Plane plane_from_angle_and_offset(float angle, float offset);
 
+
 struct Circle {
 	Vector2 center;
 	float radius;
 };
+
+SDFD_DEF float distance(Circle c, Vector2 p);
+
+struct Ellipse {
+	Vector2 center;
+	Vector2 radius;
+};
+
+SDFD_DEF float distance(Ellipse e, Vector2 p);
+
 
 /*
 #define x(type, name, kind_value)
@@ -86,16 +119,14 @@ struct Primitive {
 struct ArgumentIndex {
 	struct Kind {
 		inline static constexpr uint32_t object_primitive = 0;
-		inline static constexpr uint32_t scene_primitive  = 1;
-		inline static constexpr uint32_t object_operation = 2;
+		inline static constexpr uint32_t object_operation = 1;
 	};
 
-	uint32_t kind  : 2;
-	uint32_t value : 30;
+	uint32_t kind  : 1;
+	uint32_t value : 31;
 };
 
 inline ArgumentIndex object_primitive_index(uint32_t i) { return {.kind = ArgumentIndex::Kind::object_primitive, .value = i}; }
-inline ArgumentIndex  scene_primitive_index(uint32_t i) { return {.kind = ArgumentIndex::Kind:: scene_primitive, .value = i}; }
 inline ArgumentIndex object_operation_index(uint32_t i) { return {.kind = ArgumentIndex::Kind::object_operation, .value = i}; }
 
 /*
@@ -133,16 +164,18 @@ struct Object {
 struct Scene {
 	std::vector<Object> objects;
 	std::vector<Primitive> primitives;
+	Vector2 scale = {1, 1};
 };
 
 SDFD_DEF bool store_to_file(Scene const &scene, char const *path);
 SDFD_DEF std::optional<Scene> load_from_file(char const *path);
 
 // Evaluates distance to primitive at point.
-SDFD_DEF float evaluate(Primitive const &primitive, Vector2 point);
+SDFD_DEF float evaluate(Scene const &scene, Primitive const &primitive, Vector2 point);
 
 // Evaluates distance to primitives at point.
-// If object contains no primitives, returns infinity.
+// If object contains no operations, returns distance to last object, otherwise
+// if object contains no primitives, returns infinity.
 SDFD_DEF float evaluate(Scene const &scene, Object const &object, Vector2 point);
 
 }
@@ -173,6 +206,68 @@ inline static constexpr Defer<Fn> make_defer(Fn fn) { return {fn}; }
 #undef defer
 #define defer(...) auto sdfd_defer_concat(_d, __COUNTER__) = ::sdfd::make_defer([&](){__VA_ARGS__;})
 
+
+float distance(Circle c, Vector2 p) {
+	return length(p - c.center) - c.radius;
+}
+float distance(Ellipse e, Vector2 in_p) {
+	// Modified
+	// https://www.shadertoy.com/view/4sS3zz
+	// Copyright © 2013 Inigo Quilez
+	auto ab = e.radius;
+	auto p = in_p - e.center;
+  //if( ab.x==ab.y ) return length(p)-ab.x;
+
+	p = abs( p ); 
+    if( p.x>p.y ){ p=p.yx(); ab=ab.yx(); }
+	
+	float l = ab.y*ab.y - ab.x*ab.x;
+	
+	if (fabsf(l) < 1e-9f) {
+		return distance(Circle{e.center, ab.y}, in_p);
+	}
+
+    float m = ab.x*p.x/l; 
+	float n = ab.y*p.y/l; 
+	float m2 = m*m;
+	float n2 = n*n;
+	
+    float c = (m2+n2-1.0f)/3.0f; 
+	float c3 = c*c*c;
+
+    float d = c3 + m2*n2;
+    float q = d  + m2*n2;
+    float g = m  + m *n2;
+
+    float co;
+
+    if( d<0.0f )
+    {
+        float h = acosf(q/c3)/3.0f;
+        float s = cosf(h) + 2.0f;
+        float t = sinf(h) * sqrtf(3.0f);
+        float rx = sqrtf( m2-c*(s+t) );
+        float ry = sqrtf( m2-c*(s-t) );
+        co = ry + sign0(l)*rx + fabsf(g)/(rx*ry);
+    }
+    else
+    {
+        float h = 2.0f*m*n*sqrtf(d);
+        float s = sign(q+h)*powf( fabsf(q+h), 1.0f/3.0f );
+        float t = sign(q-h)*powf( fabsf(q-h), 1.0f/3.0f );
+        float rx = -(s+t) - c*4.0f + 2.0f*m2;
+        float ry =  (s-t)*sqrtf(3.0f);
+        float rm = sqrtf( rx*rx + ry*ry );
+        co = ry/sqrtf(rm-rx) + 2.0f*g/rm;
+    }
+    co = (co-m)/2.0f;
+
+    float si = sqrtf( std::max(1.0f-co*co,0.0f) );
+ 
+	Vector2 r = ab * Vector2{co,si};
+	
+    return length(r-p) * sign(p.y-r.y);
+}
 
 Plane plane_from_point_and_normal(Vector2 point, Vector2 normal) {
 	return Plane {
@@ -341,16 +436,25 @@ std::optional<Scene> load_from_file(char const *path) {
 	return result;
 }
 
-float evaluate(Primitive const &primitive, Vector2 point) {
+float evaluate(Scene const &scene, Primitive const &primitive, Vector2 point) {
 	switch (primitive.kind) {
 		case Primitive::Kind::float1: {
 			return primitive.float1;
 		}
 		case Primitive::Kind::plane: {
-			return dot(primitive.plane.normal, point) - primitive.plane.offset;
+			Vector2 a = primitive.plane.normal * primitive.plane.offset;
+			Vector2 b = a + perp(primitive.plane.normal);
+
+			a *= scene.scale;
+			b *= scene.scale;
+
+			Vector2 normal = perp(a - b);
+			float offset = dot(a, normal);
+
+			return dot(normal, point) - offset;
 		}
 		case Primitive::Kind::circle: {
-			return length(point - primitive.circle.center) - primitive.circle.radius;
+			return distance(Ellipse{.center = scene.scale * primitive.circle.center, .radius = scene.scale * primitive.circle.radius}, point);
 		}
 		default:
 			assert(!"invalid Primitive::Kind");
@@ -359,7 +463,11 @@ float evaluate(Primitive const &primitive, Vector2 point) {
 
 float evaluate(Scene const &scene, Object const &object, Vector2 point) {
 	if (object.operations.size() == 0) {
-		return std::numeric_limits<float>::infinity();
+		if (object.primitives.size() == 0) {
+			return std::numeric_limits<float>::infinity();
+		}
+
+		return evaluate(scene, object.primitives.back(), point);
 	}
 
 	std::vector<float> operation_results;
@@ -369,10 +477,7 @@ float evaluate(Scene const &scene, Object const &object, Vector2 point) {
 		switch (index.kind) {
 			default:
 			case ArgumentIndex::Kind::object_primitive: {
-				return evaluate(object.primitives[index.value], point);
-			}
-			case ArgumentIndex::Kind::scene_primitive: {
-				return evaluate(scene.primitives[index.value], point);
+				return evaluate(scene, object.primitives[index.value], point);
 			}
 			case ArgumentIndex::Kind::object_operation: {
 				return operation_results[index.value];

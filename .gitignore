@@ -6,3 +6,7 @@ tmp/
 *.pdb
 *.o
 *.ilk
+output.png
+output.sdfd
+example/output.png
+example/output.sdfd

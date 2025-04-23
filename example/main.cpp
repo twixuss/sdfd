@@ -10,6 +10,17 @@
 #define WIDTH  64
 #define HEIGHT 64
 
+// Map x from source range to destination range, allowing extrapolation.
+template <class T, class U>
+U map(T x, T sfrom, T sto, U dfrom, U dto) {
+	return (x - sfrom) / (sto - sfrom) * (dto - dfrom) + dfrom;
+}
+// Map x from source range to destination range, clamping to bounds.
+template <class T, class U>
+U mapc(T x, T sfrom, T sto, U dfrom, U dto) {
+	return (std::clamp(x, std::min(sfrom, sto), std::max(sfrom, sto)) - sfrom) / (sto - sfrom) * (dto - dfrom) + dfrom;
+}
+
 int main(int argc, char **argv) {
 	// This example shows how to create, load, serialize, and render shapes.
 
@@ -63,15 +74,30 @@ int main(int argc, char **argv) {
 		scene = sdfd::load_from_file(argv[1]).value();
 		object = &scene.objects.at(0);
 	}
-
 	// Render the field and write to output.png
+	bool const for_lcd_display = true;
+
+	if (for_lcd_display) {
+		scene.scale = {3.0f, 1.0f};
+	}
+
 	uint32_t pixels[WIDTH*HEIGHT];
 	for (int x = 0; x < WIDTH; ++x) {
 		for (int y = 0; y < HEIGHT; ++y) {
-			float distance = sdfd::evaluate(scene, *object, {x+0.5f, y+0.5f});
-			float alpha = std::clamp(0.5f - distance, 0.0f, 1.0f);
-			uint8_t c = alpha * nextafterf(256, -1);
-			uint32_t pixel = 0xff000000 | c | (c << 8) | (c << 16);
+			uint32_t pixel = 0xff000000;
+			if (for_lcd_display) {
+				for (int ch = 0; ch < 3; ++ch) {
+					float distance = sdfd::evaluate(scene, *object, {x*3 + ch + 0.5f, y+0.5f});
+					float alpha = mapc(distance, 0.5f, -0.5f, 0.0f, 1.0f);
+					uint8_t c = alpha * nextafterf(256, -1);
+					pixel |= c << (ch * 8);
+				}
+			} else {
+				float distance = sdfd::evaluate(scene, *object, {x+0.5f, y+0.5f});
+				float alpha = std::clamp(0.5f - distance, 0.0f, 1.0f);
+				uint8_t c = alpha * nextafterf(256, -1);
+				pixel = 0xff000000 | c | (c << 8) | (c << 16);
+			}
 			pixels[y*WIDTH + x] = pixel;
 		}
 	}
